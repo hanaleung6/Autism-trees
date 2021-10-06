@@ -1,0 +1,120 @@
+---
+title: 'Autism trees'
+date: "16 September 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(tidyverse)
+```
+
+This lab looks at data collected to try to detect autism spectrum disorder (ASD) biochemically. (note: remove the non-biochemical variable).
+
+We use trees to detect ASD.
+
+## Tasks
+
+1. Use `rpart()` to grow a tree that distinguishes the ASD and NEU groups, and give the confusion matrix and the proportion of people (from these two groups) correctly classified. Plot the tree (showing labels -- make sure you set the margin in the plot call to make room for the labels).
+```{r}
+raw_autism <- read_csv("S1Dataset.csv") # read in the data
+spec(raw_autism) # check data
+
+# fix character to numeric
+vnames <- read_csv("S1Dataset.csv",n_max=0)
+raw_autism <- read_csv("S1Dataset.csv",skip=2) # Need to ignore 2nd row as it contains units only.
+names(raw_autism) <- names(vnames)
+spec(raw_autism) # check again
+
+autism <- raw_autism[, -26] # skip the last column as the last column is not a biochemical variable.
+autism_AN <- autism %>% filter(Group %in% c("ASD", "NEU")) # remove the rows of SIB groups.
+
+# a tree
+library(rpart)
+tree_AN <- autism_AN %>% rpart(Group~., data =.) # grow a tree
+plotcp(tree_AN) # plot the output of the cross-validation
+```
+
+Overfitting not a problem here, let’s just stick with unpruned tree.
+
+```{r}
+#printcp(tree_AN) # print the output of the cross-validation
+predict1 <-  predict(tree_AN, type = "class") # Sufficient to get fitted values out
+confMatrix1 <- with(autism_AN, table(actual=Group, predicted=predict1)) # confusion matrix
+
+# the proportion of people (from these two groups) correctly classified
+sum(diag(confMatrix1)) / nrow(autism_AN)
+plot(tree_AN, margin=0.2) # plot the tree
+text(tree_AN)
+```
+
+2. The dataset makes the classifier look good, because the number of ASD and neurotypical participants are equal.  In reality, ASD affects about 1.5% of people.  Run `rpart()` with the prior argument (see the help page), to build a tree based on population prior probabilities of 0.015 and 0.985. Report the confusion matrix and the proportion of ASD and NEU groups correctly classified. Plot the tree.
+```{r}
+# a tree
+tree_AN_2 <- autism_AN %>% rpart(Group~., parms = list(prior = c(.015, .985)), data =.) # grow a tree
+
+plotcp(tree_AN_2) # plot the output of the cross-validation
+
+predict2 = predict(prune(tree_AN_2, cp = 1), type = "class") # Sufficient to get fitted values out
+
+confMatrix2 <- with(autism_AN, table(actual=Group, predicted=predict2)) # confusion matrix
+sum(diag(confMatrix2)) / nrow(autism_AN) # proportion correct
+
+# no tree to plot here, just a root...
+# just plot the whole tree
+plot(tree_AN_2, margin=0.2) # plot the tree
+text(tree_AN_2)
+
+#printcp(tree_AN_2) # print the output of the cross-validation
+```
+
+3. Suppose that false negative classifications (missing ASD) are thought to be more important than false positive (suspecting ASD). Run `rpart()` with the `prior` argument as in the previous question and also with the `loss` argument saying that false negatives are 10 times as bad as false positives.
+Report the confusion matrix and the proportion of ASD and NEU  groups correctly classified. Plot the tree. Did you get the result you expected? 
+```{r}
+lossmatrix <- matrix(c(0,10,1,0), byrow = TRUE, nrow = 2)
+# a tree
+tree_AN_3 <- autism_AN %>% rpart(Group~., parms = list(loss = lossmatrix, prior = c(.015, .985)), data =.) # grow a tree
+plotcp(tree_AN_3) # plot the output of the cross-validation
+```
+
+This is not the result we expected - the best tree is not worth plotting as it is just a stump and we know the classification is not good. It is possible the greedy nature of the algorithm is causing problems here.
+
+Lets see if increasing the penalty to 100 improves things.
+```{r}
+lossmatrix <- matrix(c(0,100,1,0), byrow = TRUE, nrow = 2)
+# a tree
+tree_AN_3 <- autism_AN %>% rpart(Group~., parms = list(loss = lossmatrix, prior = c(.015, .985)), data =.) # grow a tree
+plotcp(tree_AN_3) # plot the output of the cross-validation
+```
+
+That is better. Looks like the best model has two nodes, so prune it back to there:
+
+```{r}
+tree_AN_3 = prune(tree_AN_3, cp = .2)
+
+predict3 = predict(tree_AN_3, type = "class") # Sufficient to get fitted values out
+
+confMatrix3 = table(Actual = autism_AN$Group, Predicted = predict3)
+correct3 = (confMatrix3[1,1] + confMatrix3[2,2]) / nrow(autism_AN)
+confMatrix3
+
+# proportion correct
+sum(diag(confMatrix3)) / nrow(autism_AN)
+
+plot(tree_AN_3, margin=0.2) # plot the tree
+text(tree_AN_3)
+
+#printcp(tree_AN_3) # print the output of the cross-validation
+```
+
+
+4. Use this final tree to predict for the SIB group (all of whom are actually neurotypical). What proportion are correctly classified?
+```{r}
+SIB <- autism %>% filter(Group == "SIB")
+predict4 <- predict(tree_AN_3, SIB, type = "class")
+(confMatrix4 <- table(predict4))
+# proportions
+confMatrix4/sum(confMatrix4)
+```
+
+So only about 72% correctly classified.
